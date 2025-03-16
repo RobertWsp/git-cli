@@ -1,3 +1,4 @@
+use clap::{Arg, Command};
 use inquire::{InquireError, Select};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -70,6 +71,13 @@ fn verify_content_to_commit() {
 }
 
 fn main() {
+    let matches = Command::new("Emoji Commit")
+        .version("1.0")
+        .author("RobertWsp <sousarobert854@gmail.com>")
+        .about("A simple CLI tool to commit with emojis.")
+        .arg(Arg::new("debug").short('d').long("debug").required(false))
+        .get_matches();
+
     verify_git_initialized();
     verify_content_to_commit();
 
@@ -152,12 +160,12 @@ fn main() {
         );
     }
 
-    println!(
-        "Output: {}",
-        String::from_utf8_lossy(&output.stdout).to_string()
-    );
-    println!(
-        "Error: {}",
-        String::from_utf8_lossy(&output.stderr).to_string()
-    );
+    println!("{}", String::from_utf8_lossy(&output.stdout).to_string());
+
+    if matches.contains_id("debug") {
+        println!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr).to_string()
+        );
+    }
 }
