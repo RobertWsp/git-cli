@@ -28,7 +28,7 @@ fn verify_git_initialized() {
     }
 }
 
-fn verify_content_to_commit() {
+fn content_to_commit() -> bool {
     // Run 'git status --porcelain' to check for uncommitted changes
     let output = std::process::Command::new("git")
         .arg("status")
@@ -38,18 +38,31 @@ fn verify_content_to_commit() {
             "Failed to execute git command",
         ));
 
-    if output.stdout.is_empty() {
-        utils::exit_message("No changes to commit.");
-    }
-
     let status_output = String::from_utf8_lossy(&output.stdout);
-    let staged_changes = status_output
-        .lines()
-        .any(|line| line.starts_with("A") || line.starts_with("M") || line.starts_with("R"));
+    let staged_changes = status_output.lines().any(|line| {
+        line.find("A ").is_some()
+            || line.find("M ").is_some()
+            || line.find("D ").is_some()
+            || line.find("R ").is_some()
+    });
 
-    if !staged_changes {
-        utils::exit_message("No changes to commit.");
+    println!();
+
+    for line in status_output.lines() {
+        if line.find("A ").is_some() {
+            println!("\x1b[0;32m{}\x1b[0m", line); // Green for added files
+        } else if line.find("M ").is_some() {
+            println!("\x1b[0;33m{}\x1b[0m", line); // Yellow for modified files
+        } else if line.find("D ").is_some() {
+            println!("\x1b[0;31m{}\x1b[0m", line); // Red for deleted files
+        } else if line.find("R ").is_some() {
+            println!("\x1b[0;34m{}\x1b[0m", line); // Blue for renamed files
+        }
     }
+
+    println!();
+
+    return staged_changes;
 }
 
 fn main() {
@@ -61,7 +74,31 @@ fn main() {
         .get_matches();
 
     verify_git_initialized();
-    verify_content_to_commit();
+
+    let has_content = content_to_commit();
+
+    if has_content {
+        let add_to_commit: Result<bool, InquireError> = inquire::Confirm::new(
+            "There are changes to commit. Do you want to add them to the commit?",
+        )
+        .prompt();
+
+        let add_to_commit = match add_to_commit {
+            Ok(add) => add,
+            Err(e) => {
+                println!("{}", utils::format_error_message(&format!("Error: {}", e)));
+                return;
+            }
+        };
+
+        if add_to_commit {
+            std::process::Command::new("git")
+                .arg("add")
+                .arg("--all")
+                .output()
+                .expect(&utils::format_error_message("Failed to stage changes"));
+        }
+    }
 
     let emojis_object =
         emojis::get_emojis().expect(&utils::format_error_message("Failed to load emojis."));
