@@ -215,4 +215,61 @@ fn main() {
     if matches.contains_id("debug") {
         println!("Debug mode enabled.");
     }
+
+    let log_output = std::process::Command::new("git")
+        .arg("log")
+        .arg("--oneline")
+        .output()
+        .expect(&utils::format_error_message(
+            "Failed to retrieve commit log",
+        ));
+
+    let log_output = String::from_utf8_lossy(&log_output.stdout);
+    println!("Current commits:\n{}", log_output);
+
+    // Get the current branch name
+    let branch_output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .output()
+        .expect(&utils::format_error_message("Failed to get current branch"));
+
+    let branch_name = String::from_utf8_lossy(&branch_output.stdout)
+        .trim()
+        .to_string();
+
+    println!("Current branch: {}", branch_name);
+
+    let push_to_remote: Result<bool, InquireError> =
+        inquire::Confirm::new("Do you want to push the commits to the remote repository?").prompt();
+
+    let push_to_remote = match push_to_remote {
+        Ok(push) => push,
+        Err(e) => {
+            println!("{}", utils::format_error_message(&format!("Error: {}", e)));
+            return;
+        }
+    };
+
+    if push_to_remote {
+        let push_status = std::process::Command::new("git")
+            .arg("push")
+            .arg("origin")
+            .arg(&branch_name)
+            .output()
+            .expect(&utils::format_error_message("Failed to push commits"));
+
+        if push_status.status.success() {
+            println!(
+                "\x1b[0;32mSuccessfully pushed commits to remote repository on branch: {}\x1b[0m",
+                branch_name
+            );
+        } else {
+            println!(
+                "{}",
+                utils::format_error_message("Error: Failed to push commits to remote repository")
+            );
+        }
+    }
 }
