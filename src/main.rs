@@ -1,5 +1,6 @@
 use clap::{Arg, Command};
 use inquire::{InquireError, Select};
+use std::io::BufRead;
 mod emojis;
 mod utils;
 
@@ -143,22 +144,57 @@ fn main() {
         }
     };
 
-    let mut git_command = format!(
-        "git commit -m \"{} {}\"",
-        selected_emoji.emoji, commit_title
-    );
+    let mut args = vec!["commit"];
+
+    args.push("-m");
+
+    let commit_title_with_emoji = format!("{} {}", selected_emoji.emoji, commit_title);
+
+    args.push(&commit_title_with_emoji);
+
+    let formatted_commit_message;
 
     if commit_message.len() > 0 {
-        git_command = format!("{} -m \"{}\"", git_command, commit_message);
+        formatted_commit_message = format!("-m \"{}\"", commit_message);
+
+        args.push(&formatted_commit_message);
     }
 
-    let output = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(git_command)
-        .output()
+    let mut child = std::process::Command::new("git")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .expect(&utils::format_error_message("Failed to execute command"));
 
-    if output.status.success() {
+    let stdout = child.stdout.take().expect("Failed to capture stdout");
+    let stderr = child.stderr.take().expect("Failed to capture stderr");
+
+    let stdout_reader = std::io::BufReader::new(stdout);
+    let stderr_reader = std::io::BufReader::new(stderr);
+
+    let stdout_thread = std::thread::spawn(move || {
+        for line in stdout_reader.lines() {
+            if let Ok(line) = line {
+                println!("{}", line);
+            }
+        }
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        for line in stderr_reader.lines() {
+            if let Ok(line) = line {
+                eprintln!("{}", line);
+            }
+        }
+    });
+
+    let status = child.wait().expect("Failed to wait on child");
+
+    stdout_thread.join().expect("Failed to join stdout thread");
+    stderr_thread.join().expect("Failed to join stderr thread");
+
+    if status.success() {
         println!(
             "\x1b[0;32mSuccessfully committed with emoji: {}\x1b[0m",
             selected_emoji.emoji
@@ -173,12 +209,7 @@ fn main() {
         );
     }
 
-    println!("{}", String::from_utf8_lossy(&output.stdout).to_string());
-
     if matches.contains_id("debug") {
-        println!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr).to_string()
-        );
+        println!("Debug mode enabled.");
     }
 }
