@@ -4,6 +4,13 @@ use std::io::BufRead;
 mod emojis;
 mod utils;
 
+#[derive(Debug, Clone)]
+struct Change {
+    color: String,
+    change_type: String,
+    value: String,
+}
+
 fn selected_emoji(emojis_object: emojis::EmojisObject, selected: String) -> emojis::Emoji {
     let selected_emoji = emojis_object
         .emojis
@@ -29,7 +36,7 @@ fn verify_git_initialized() {
     }
 }
 
-fn content_to_commit() -> bool {
+fn content_to_commit() -> Vec<Change> {
     // Run 'git status --porcelain' to check for uncommitted changes
     let output = std::process::Command::new("git")
         .arg("status")
@@ -40,33 +47,55 @@ fn content_to_commit() -> bool {
         ));
 
     let status_output = String::from_utf8_lossy(&output.stdout);
-    let has_changes = status_output.lines().any(|line| {
-        line.find("A ").is_some()
-            || line.find("M ").is_some()
-            || line.find("D ").is_some()
-            || line.find("R ").is_some()
-            || line.find("??").is_some()
-    });
 
     println!();
 
+    let mut changes = Vec::new();
+
     for line in status_output.lines() {
-        if line.find("A ").is_some() {
-            println!("\x1b[0;32m{}\x1b[0m", line); // Green for added files
+        let line_parsed = line.trim().split_whitespace().last().unwrap().to_string();
+
+        let change = if line.find("A ").is_some() {
+            Change {
+                color: "\x1b[0;32m".to_string(), // Green for added files
+                change_type: "Added".to_string(),
+                value: line_parsed,
+            }
         } else if line.find("M ").is_some() {
-            println!("\x1b[0;33m{}\x1b[0m", line); // Yellow for modified files
+            Change {
+                color: "\x1b[0;33m".to_string(), // Yellow for modified files
+                change_type: "Modified".to_string(),
+                value: line_parsed,
+            }
         } else if line.find("D ").is_some() {
-            println!("\x1b[0;31m{}\x1b[0m", line); // Red for deleted files
+            Change {
+                color: "\x1b[0;31m".to_string(), // Red for deleted files
+                change_type: "Deleted".to_string(),
+                value: line_parsed,
+            }
         } else if line.find("R ").is_some() {
-            println!("\x1b[0;34m{}\x1b[0m", line); // Blue for renamed files
+            Change {
+                color: "\x1b[0;34m".to_string(), // Blue for renamed files
+                change_type: "Renamed".to_string(),
+                value: line_parsed,
+            }
         } else if line.find("??").is_some() {
-            println!("\x1b[0;35m{}\x1b[0m", line); // Magenta for untracked files
-        }
+            Change {
+                color: "\x1b[0;35m".to_string(), // Magenta for untracked files
+                change_type: "Untracked".to_string(),
+                value: line_parsed,
+            }
+        } else {
+            continue;
+        };
+
+        println!("{}{}\x1b[0m", change.color, change.value);
+        changes.push(change);
     }
 
     println!();
 
-    return has_changes;
+    return changes;
 }
 
 fn main() {
@@ -79,28 +108,64 @@ fn main() {
 
     verify_git_initialized();
 
-    let has_content = content_to_commit();
+    let debug = matches.contains_id("debug");
 
-    if has_content {
-        let add_to_commit: Result<bool, InquireError> = inquire::Confirm::new(
-            "There are changes to commit. Do you want to add them to the commit?",
+    if debug {
+        println!("Debug mode enabled.");
+    }
+
+    let changes = content_to_commit();
+
+    if !changes.is_empty() {
+        let changes_to_commit: Result<Vec<String>, InquireError> = inquire::MultiSelect::new(
+            "Select changes to add to the commit:",
+            changes
+                .iter()
+                .map(|change| format!("{}: {}{}", change.change_type, change.color, change.value))
+                .collect(),
         )
         .prompt();
 
-        let add_to_commit = match add_to_commit {
-            Ok(add) => add,
+        let changes_to_commit = match changes_to_commit {
+            Ok(changes) => changes,
             Err(e) => {
                 println!("{}", utils::format_error_message(&format!("Error: {}", e)));
                 return;
             }
         };
 
-        if add_to_commit {
-            std::process::Command::new("git")
+        let changes_to_commit: Vec<Change> = changes
+            .iter()
+            .filter(|change| {
+                changes_to_commit.contains(&format!(
+                    "{}: {}{}",
+                    change.change_type, change.color, change.value
+                ))
+            })
+            .cloned()
+            .collect();
+
+        for change in changes_to_commit {
+            let file_path = change.value.clone();
+
+            let add_to_commit_result = std::process::Command::new("git")
                 .arg("add")
-                .arg("--all")
+                .arg(&file_path)
                 .output()
                 .expect(&utils::format_error_message("Failed to stage changes"));
+
+            if !add_to_commit_result.status.success() {
+                if debug {
+                    eprintln!("{}", String::from_utf8_lossy(&add_to_commit_result.stderr));
+                }
+                println!(
+                    "{}",
+                    utils::format_error_message(&format!(
+                        "Error: Failed to stage changes for file: {}",
+                        file_path
+                    ))
+                );
+            }
         }
     }
 
@@ -212,21 +277,6 @@ fn main() {
         );
     }
 
-    if matches.contains_id("debug") {
-        println!("Debug mode enabled.");
-    }
-
-    let log_output = std::process::Command::new("git")
-        .arg("log")
-        .arg("--oneline")
-        .output()
-        .expect(&utils::format_error_message(
-            "Failed to retrieve commit log",
-        ));
-
-    let log_output = String::from_utf8_lossy(&log_output.stdout);
-    println!("Current commits:\n{}", log_output);
-
     // Get the current branch name
     let branch_output = std::process::Command::new("git")
         .arg("rev-parse")
@@ -238,6 +288,85 @@ fn main() {
     let branch_name = String::from_utf8_lossy(&branch_output.stdout)
         .trim()
         .to_string();
+
+    let pull_status = std::process::Command::new("git")
+        .arg("pull")
+        .arg("origin")
+        .arg(&branch_name)
+        .output()
+        .expect(&utils::format_error_message(
+            "Failed to pull changes from remote",
+        ));
+
+    if !pull_status.status.success() {
+        println!(
+            "{}",
+            utils::format_error_message("Error: Failed to pull changes from remote repository")
+        );
+
+        let stash_status = std::process::Command::new("git")
+            .arg("stash")
+            .output()
+            .expect(&utils::format_error_message("Failed to stash changes"));
+
+        if stash_status.status.success() {
+            println!("\x1b[0;32mSuccessfully stashed changes\x1b[0m");
+
+            let pull_status = std::process::Command::new("git")
+                .arg("pull")
+                .arg("origin")
+                .arg(&branch_name)
+                .output()
+                .expect(&utils::format_error_message(
+                    "Failed to pull changes from remote",
+                ));
+
+            if pull_status.status.success() {
+                println!("\x1b[0;32mSuccessfully pulled changes from remote repository\x1b[0m");
+
+                let stash_pop_status = std::process::Command::new("git")
+                    .arg("stash")
+                    .arg("pop")
+                    .output()
+                    .expect(&utils::format_error_message(
+                        "Failed to pop stashed changes",
+                    ));
+
+                if stash_pop_status.status.success() {
+                    println!("\x1b[0;32mSuccessfully popped stashed changes\x1b[0m");
+                } else {
+                    println!(
+                        "{}",
+                        utils::format_error_message("Error: Failed to pop stashed changes")
+                    );
+                }
+            } else {
+                println!(
+                    "{}",
+                    utils::format_error_message(
+                        "Error: Failed to pull changes from remote repository"
+                    )
+                );
+            }
+        } else {
+            println!(
+                "{}",
+                utils::format_error_message("Error: Failed to stash changes")
+            );
+        }
+    }
+
+    let log_output = std::process::Command::new("git")
+        .arg("log")
+        .arg("--oneline")
+        .output()
+        .expect(&utils::format_error_message(
+            "Failed to retrieve commit log",
+        ));
+
+    let log_output = String::from_utf8_lossy(&log_output.stdout);
+    let first_five_commits: Vec<&str> = log_output.lines().take(5).collect();
+    println!("Current commits:\n{}", first_five_commits.join("\n"));
 
     println!("Current branch: {}", branch_name);
 
