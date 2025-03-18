@@ -40,11 +40,12 @@ fn content_to_commit() -> bool {
         ));
 
     let status_output = String::from_utf8_lossy(&output.stdout);
-    let staged_changes = status_output.lines().any(|line| {
+    let has_changes = status_output.lines().any(|line| {
         line.find("A ").is_some()
             || line.find("M ").is_some()
             || line.find("D ").is_some()
             || line.find("R ").is_some()
+            || line.find("??").is_some()
     });
 
     println!();
@@ -58,12 +59,14 @@ fn content_to_commit() -> bool {
             println!("\x1b[0;31m{}\x1b[0m", line); // Red for deleted files
         } else if line.find("R ").is_some() {
             println!("\x1b[0;34m{}\x1b[0m", line); // Blue for renamed files
+        } else if line.find("??").is_some() {
+            println!("\x1b[0;35m{}\x1b[0m", line); // Magenta for untracked files
         }
     }
 
     println!();
 
-    return staged_changes;
+    return has_changes;
 }
 
 fn main() {
