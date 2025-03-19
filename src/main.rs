@@ -139,6 +139,15 @@ fn run_command_stream(
     return status;
 }
 
+fn format_string_to_title(title: String) -> String {
+    let mut chars = title.chars();
+
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 fn main() {
     let matches = Command::new("Emoji Commit")
         .version("1.0")
@@ -232,7 +241,9 @@ fn main() {
     };
 
     let commit_title: Result<String, InquireError> =
-        inquire::Text::new("Enter commit title: ").prompt();
+        inquire::CustomType::<String>::new("Enter commit title: ")
+            .with_parser(&|input| Ok(format_string_to_title(input.to_string())))
+            .prompt();
 
     let commit_title = match commit_title {
         Ok(title) => title,
@@ -243,7 +254,9 @@ fn main() {
     };
 
     let commit_message: Result<String, InquireError> =
-        inquire::Text::new("Enter commit message: ").prompt();
+        inquire::CustomType::<String>::new("Enter commit message: ")
+            .with_parser(&|message| Ok(format_string_to_title(message.to_string())))
+            .prompt();
 
     let commit_message = match commit_message {
         Ok(message) => message,
