@@ -89,7 +89,6 @@ fn content_to_commit() -> Vec<Change> {
             continue;
         };
 
-        println!("{}{}\x1b[0m", change.color, change.value);
         changes.push(change);
     }
 
