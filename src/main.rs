@@ -288,70 +288,171 @@ fn main() {
         .trim()
         .to_string();
 
-    let pull_status = std::process::Command::new("git")
-        .arg("pull")
+    // Check if there are any changes to pull from the remote repository
+    let fetch_status = std::process::Command::new("git")
+        .arg("fetch")
         .arg("origin")
         .arg(&branch_name)
         .output()
         .expect(&utils::format_error_message(
-            "Failed to pull changes from remote",
+            "Failed to fetch changes from remote",
         ));
 
-    if !pull_status.status.success() {
+    if !fetch_status.status.success() {
         println!(
             "{}",
-            utils::format_error_message("Error: Failed to pull changes from remote repository")
+            utils::format_error_message("Error: Failed to fetch changes from remote repository")
         );
-
-        let stash_status = std::process::Command::new("git")
-            .arg("stash")
+    } else {
+        let local_commit = std::process::Command::new("git")
+            .arg("rev-parse")
+            .arg("HEAD")
             .output()
-            .expect(&utils::format_error_message("Failed to stash changes"));
+            .expect(&utils::format_error_message(
+                "Failed to get local commit hash",
+            ));
 
-        if stash_status.status.success() {
-            println!("\x1b[0;32mSuccessfully stashed changes\x1b[0m");
+        let remote_commit = std::process::Command::new("git")
+            .arg("rev-parse")
+            .arg(format!("origin/{}", branch_name))
+            .output()
+            .expect(&utils::format_error_message(
+                "Failed to get remote commit hash",
+            ));
 
-            let pull_status = std::process::Command::new("git")
+        if local_commit.stdout != remote_commit.stdout {
+            println!("There are changes to pull from the remote repository.");
+
+            let mut pull_status = std::process::Command::new("git")
                 .arg("pull")
                 .arg("origin")
                 .arg(&branch_name)
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
                 .expect(&utils::format_error_message(
                     "Failed to pull changes from remote",
                 ));
 
-            if pull_status.status.success() {
-                println!("\x1b[0;32mSuccessfully pulled changes from remote repository\x1b[0m");
+            let stdout = pull_status.stdout.take().expect("Failed to capture stdout");
+            let stderr = pull_status.stderr.take().expect("Failed to capture stderr");
 
-                let stash_pop_status = std::process::Command::new("git")
-                    .arg("stash")
-                    .arg("pop")
-                    .output()
-                    .expect(&utils::format_error_message(
-                        "Failed to pop stashed changes",
-                    ));
+            let stdout_reader = std::io::BufReader::new(stdout);
+            let stderr_reader = std::io::BufReader::new(stderr);
 
-                if stash_pop_status.status.success() {
-                    println!("\x1b[0;32mSuccessfully popped stashed changes\x1b[0m");
-                } else {
-                    println!(
-                        "{}",
-                        utils::format_error_message("Error: Failed to pop stashed changes")
-                    );
+            let stdout_thread = std::thread::spawn(move || {
+                for line in stdout_reader.lines() {
+                    if let Ok(line) = line {
+                        println!("{}", line);
+                    }
                 }
-            } else {
+            });
+
+            let stderr_thread = std::thread::spawn(move || {
+                for line in stderr_reader.lines() {
+                    if let Ok(line) = line {
+                        eprintln!("{}", line);
+                    }
+                }
+            });
+
+            let status = pull_status.wait().expect("Failed to wait on child");
+
+            stdout_thread.join().expect("Failed to join stdout thread");
+            stderr_thread.join().expect("Failed to join stderr thread");
+
+            if !status.success() {
                 println!(
                     "{}",
                     utils::format_error_message(
                         "Error: Failed to pull changes from remote repository"
                     )
                 );
+
+                let stash_status = std::process::Command::new("git")
+                    .arg("stash")
+                    .output()
+                    .expect(&utils::format_error_message("Failed to stash changes"));
+
+                if stash_status.status.success() {
+                    println!("\x1b[0;32mSuccessfully stashed changes\x1b[0m");
+
+                    let mut pull_status = std::process::Command::new("git")
+                        .arg("pull")
+                        .arg("origin")
+                        .arg(&branch_name)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .expect(&utils::format_error_message(
+                            "Failed to pull changes from remote",
+                        ));
+
+                    let stdout = pull_status.stdout.take().expect("Failed to capture stdout");
+                    let stderr = pull_status.stderr.take().expect("Failed to capture stderr");
+
+                    let stdout_reader = std::io::BufReader::new(stdout);
+                    let stderr_reader = std::io::BufReader::new(stderr);
+
+                    let stdout_thread = std::thread::spawn(move || {
+                        for line in stdout_reader.lines() {
+                            if let Ok(line) = line {
+                                println!("{}", line);
+                            }
+                        }
+                    });
+
+                    let stderr_thread = std::thread::spawn(move || {
+                        for line in stderr_reader.lines() {
+                            if let Ok(line) = line {
+                                eprintln!("{}", line);
+                            }
+                        }
+                    });
+
+                    let status = pull_status.wait().expect("Failed to wait on child");
+
+                    stdout_thread.join().expect("Failed to join stdout thread");
+                    stderr_thread.join().expect("Failed to join stderr thread");
+
+                    if status.success() {
+                        println!(
+                            "\x1b[0;32mSuccessfully pulled changes from remote repository\x1b[0m"
+                        );
+
+                        let stash_pop_status = std::process::Command::new("git")
+                            .arg("stash")
+                            .arg("pop")
+                            .output()
+                            .expect(&utils::format_error_message(
+                                "Failed to pop stashed changes",
+                            ));
+
+                        if stash_pop_status.status.success() {
+                            println!("\x1b[0;32mSuccessfully popped stashed changes\x1b[0m");
+                        } else {
+                            println!(
+                                "{}",
+                                utils::format_error_message("Error: Failed to pop stashed changes")
+                            );
+                        }
+                    } else {
+                        println!(
+                            "{}",
+                            utils::format_error_message(
+                                "Error: Failed to pull changes from remote repository"
+                            )
+                        );
+                    }
+                } else {
+                    println!(
+                        "{}",
+                        utils::format_error_message("Error: Failed to stash changes")
+                    );
+                }
             }
         } else {
-            println!(
-                "{}",
-                utils::format_error_message("Error: Failed to stash changes")
-            );
+            println!("No changes to pull from the remote repository.");
         }
     }
 
