@@ -171,7 +171,12 @@ fn main() {
             "Select changes to add to the commit:",
             changes
                 .iter()
-                .map(|change| format!("{}: {}{}", change.change_type, change.color, change.value))
+                .map(|change| {
+                    format!(
+                        "{}{}: {}\x1b[0m",
+                        change.color, change.change_type, change.value
+                    )
+                })
                 .collect(),
         )
         .prompt();
@@ -183,24 +188,23 @@ fn main() {
                 return;
             }
         };
-
-        let changes_to_commit: Vec<Change> = changes
+        let selected_files: Vec<String> = changes
             .iter()
             .filter(|change| {
                 changes_to_commit.contains(&format!(
-                    "{}: {}{}",
-                    change.change_type, change.color, change.value
+                    "{}{}: {}\x1b[0m",
+                    change.color, change.change_type, change.value
                 ))
             })
-            .cloned()
+            .map(|change| change.value.clone())
             .collect();
 
-        for change in changes_to_commit {
-            let file_path = change.value.clone();
+        println!("Total files staged: {}", selected_files.len());
 
+        if !selected_files.is_empty() {
             let add_to_commit_result = std::process::Command::new("git")
                 .arg("add")
-                .arg(&file_path)
+                .args(&selected_files)
                 .output()
                 .expect(&utils::format_error_message("Failed to stage changes"));
 
@@ -210,10 +214,7 @@ fn main() {
                 }
                 println!(
                     "{}",
-                    utils::format_error_message(&format!(
-                        "Error: Failed to stage changes for file: {}",
-                        file_path
-                    ))
+                    utils::format_error_message("Error: Failed to stage changes")
                 );
             }
         }
