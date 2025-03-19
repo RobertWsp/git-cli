@@ -97,6 +97,48 @@ fn content_to_commit() -> Vec<Change> {
     return changes;
 }
 
+fn run_command_stream(
+    command: &str,
+    args: Vec<&str>,
+    error_message: &str,
+) -> std::process::ExitStatus {
+    let mut child = std::process::Command::new(command)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect(&utils::format_error_message(error_message));
+
+    let stdout = child.stdout.take().expect("Failed to capture stdout");
+    let stderr = child.stderr.take().expect("Failed to capture stderr");
+
+    let stdout_reader = std::io::BufReader::new(stdout);
+    let stderr_reader = std::io::BufReader::new(stderr);
+
+    let stdout_thread = std::thread::spawn(move || {
+        for line in stdout_reader.lines() {
+            if let Ok(line) = line {
+                println!("{}", line);
+            }
+        }
+    });
+
+    let stderr_thread = std::thread::spawn(move || {
+        for line in stderr_reader.lines() {
+            if let Ok(line) = line {
+                eprintln!("{}", line);
+            }
+        }
+    });
+
+    let status = child.wait().expect("Failed to wait on child");
+
+    stdout_thread.join().expect("Failed to join stdout thread");
+    stderr_thread.join().expect("Failed to join stderr thread");
+
+    return status;
+}
+
 fn main() {
     let matches = Command::new("Emoji Commit")
         .version("1.0")
@@ -227,39 +269,7 @@ fn main() {
         args.push(&formatted_commit_message);
     }
 
-    let mut child = std::process::Command::new("git")
-        .args(&args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect(&utils::format_error_message("Failed to execute command"));
-
-    let stdout = child.stdout.take().expect("Failed to capture stdout");
-    let stderr = child.stderr.take().expect("Failed to capture stderr");
-
-    let stdout_reader = std::io::BufReader::new(stdout);
-    let stderr_reader = std::io::BufReader::new(stderr);
-
-    let stdout_thread = std::thread::spawn(move || {
-        for line in stdout_reader.lines() {
-            if let Ok(line) = line {
-                println!("{}", line);
-            }
-        }
-    });
-
-    let stderr_thread = std::thread::spawn(move || {
-        for line in stderr_reader.lines() {
-            if let Ok(line) = line {
-                eprintln!("{}", line);
-            }
-        }
-    });
-
-    let status = child.wait().expect("Failed to wait on child");
-
-    stdout_thread.join().expect("Failed to join stdout thread");
-    stderr_thread.join().expect("Failed to join stderr thread");
+    let status = run_command_stream("git", args, "Failed to commit changes");
 
     if status.success() {
         println!(
@@ -323,43 +333,10 @@ fn main() {
         if local_commit.stdout != remote_commit.stdout {
             println!("There are changes to pull from the remote repository.");
 
-            let mut pull_status = std::process::Command::new("git")
-                .arg("pull")
-                .arg("origin")
-                .arg(&branch_name)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .expect(&utils::format_error_message(
-                    "Failed to pull changes from remote",
-                ));
+            let git_pull_args = vec!["pull", "origin", &branch_name];
 
-            let stdout = pull_status.stdout.take().expect("Failed to capture stdout");
-            let stderr = pull_status.stderr.take().expect("Failed to capture stderr");
-
-            let stdout_reader = std::io::BufReader::new(stdout);
-            let stderr_reader = std::io::BufReader::new(stderr);
-
-            let stdout_thread = std::thread::spawn(move || {
-                for line in stdout_reader.lines() {
-                    if let Ok(line) = line {
-                        println!("{}", line);
-                    }
-                }
-            });
-
-            let stderr_thread = std::thread::spawn(move || {
-                for line in stderr_reader.lines() {
-                    if let Ok(line) = line {
-                        eprintln!("{}", line);
-                    }
-                }
-            });
-
-            let status = pull_status.wait().expect("Failed to wait on child");
-
-            stdout_thread.join().expect("Failed to join stdout thread");
-            stderr_thread.join().expect("Failed to join stderr thread");
+            let status =
+                run_command_stream("git", git_pull_args, "Failed to pull changes from remote");
 
             if !status.success() {
                 println!(
@@ -377,43 +354,13 @@ fn main() {
                 if stash_status.status.success() {
                     println!("\x1b[0;32mSuccessfully stashed changes\x1b[0m");
 
-                    let mut pull_status = std::process::Command::new("git")
-                        .arg("pull")
-                        .arg("origin")
-                        .arg(&branch_name)
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()
-                        .expect(&utils::format_error_message(
-                            "Failed to pull changes from remote",
-                        ));
+                    let git_pull_args = vec!["pull", "origin", &branch_name];
 
-                    let stdout = pull_status.stdout.take().expect("Failed to capture stdout");
-                    let stderr = pull_status.stderr.take().expect("Failed to capture stderr");
-
-                    let stdout_reader = std::io::BufReader::new(stdout);
-                    let stderr_reader = std::io::BufReader::new(stderr);
-
-                    let stdout_thread = std::thread::spawn(move || {
-                        for line in stdout_reader.lines() {
-                            if let Ok(line) = line {
-                                println!("{}", line);
-                            }
-                        }
-                    });
-
-                    let stderr_thread = std::thread::spawn(move || {
-                        for line in stderr_reader.lines() {
-                            if let Ok(line) = line {
-                                eprintln!("{}", line);
-                            }
-                        }
-                    });
-
-                    let status = pull_status.wait().expect("Failed to wait on child");
-
-                    stdout_thread.join().expect("Failed to join stdout thread");
-                    stderr_thread.join().expect("Failed to join stderr thread");
+                    let status = run_command_stream(
+                        "git",
+                        git_pull_args,
+                        "Failed to pull changes from remote",
+                    );
 
                     if status.success() {
                         println!(
