@@ -101,7 +101,7 @@ fn run_command_stream(
     command: &str,
     args: Vec<&str>,
     error_message: &str,
-) -> std::process::ExitStatus {
+) -> (String, std::process::ExitStatus) {
     let mut child = std::process::Command::new(command)
         .args(args)
         .stdout(std::process::Stdio::piped())
@@ -116,27 +116,39 @@ fn run_command_stream(
     let stderr_reader = std::io::BufReader::new(stderr);
 
     let stdout_thread = std::thread::spawn(move || {
+        let mut output = String::new();
+
         for line in stdout_reader.lines() {
             if let Ok(line) = line {
                 println!("{}", line);
+                output.push_str(&line);
+                output.push('\n');
             }
         }
+
+        output
     });
 
     let stderr_thread = std::thread::spawn(move || {
+        let mut output = String::new();
         for line in stderr_reader.lines() {
             if let Ok(line) = line {
                 eprintln!("{}", line);
+                output.push_str(&line);
+                output.push('\n');
             }
         }
+        output
     });
 
     let status = child.wait().expect("Failed to wait on child");
 
-    stdout_thread.join().expect("Failed to join stdout thread");
-    stderr_thread.join().expect("Failed to join stderr thread");
+    let stdout_output = stdout_thread.join().expect("Failed to join stdout thread");
+    let stderr_output = stderr_thread.join().expect("Failed to join stderr thread");
 
-    return status;
+    let combined_output = format!("{}\n{}", stdout_output, stderr_output);
+
+    return (combined_output, status);
 }
 
 fn format_string_to_title(title: String) -> String {
@@ -165,6 +177,8 @@ fn main() {
     }
 
     let changes = content_to_commit();
+
+    let mut selected_files_to_commit = Vec::<String>::new();
 
     if !changes.is_empty() {
         let changes_to_commit: Result<Vec<String>, InquireError> = inquire::MultiSelect::new(
@@ -198,6 +212,8 @@ fn main() {
             })
             .map(|change| change.value.clone())
             .collect();
+
+        selected_files_to_commit = selected_files.clone();
 
         println!("Total files staged: {}", selected_files.len());
 
@@ -275,7 +291,7 @@ fn main() {
 
     args.push(&commit_title_with_emoji);
 
-    let formatted_commit_message;
+    let mut formatted_commit_message = String::new();
 
     if commit_message.len() > 0 {
         formatted_commit_message = format!("-m \"{}\"", commit_message);
@@ -283,7 +299,10 @@ fn main() {
         args.push(&formatted_commit_message);
     }
 
-    let status = run_command_stream("git", args, "Failed to commit changes");
+    let result = run_command_stream("git", args, "Failed to commit changes");
+
+    let output = result.0;
+    let status = result.1;
 
     if status.success() {
         println!(
@@ -298,6 +317,62 @@ fn main() {
                 selected_emoji.emoji
             ))
         );
+
+        let output_lower = output.to_lowercase();
+
+        if output_lower.contains("problems") {
+            println!("Eslint failed. Exiting...");
+            std::process::exit(1);
+        }
+
+        if output_lower.contains("...failed") {
+            println!("Pre-commit hook failed. Verifying staged files...");
+
+            if !selected_files_to_commit.is_empty() {
+                let add_to_commit_result = std::process::Command::new("git")
+                    .arg("add")
+                    .args(&selected_files_to_commit)
+                    .output()
+                    .expect(&utils::format_error_message("Failed to re-stage changes"));
+
+                if !add_to_commit_result.status.success() {
+                    eprintln!("{}", String::from_utf8_lossy(&add_to_commit_result.stderr));
+                    println!(
+                        "{}",
+                        utils::format_error_message("Error: Failed to re-stage changes")
+                    );
+                } else {
+                    println!("\x1b[0;32mSuccessfully re-staged changes\x1b[0m");
+
+                    let args = vec![
+                        "commit",
+                        "-m",
+                        &commit_title_with_emoji,
+                        &formatted_commit_message,
+                    ];
+
+                    let commit_result = run_command_stream("git", args, "Failed to commit changes");
+
+                    let commit_status = commit_result.1;
+
+                    if commit_status.success() {
+                        println!(
+                            "\x1b[0;32mSuccessfully committed with emoji: {}\x1b[0m",
+                            selected_emoji.emoji
+                        );
+                    } else {
+                        println!(
+                            "{}",
+                            utils::format_error_message(&format!(
+                                "Error: Failed to commit with emoji: {}",
+                                selected_emoji.emoji
+                            ))
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
     }
 
     // Get the current branch name
@@ -349,8 +424,10 @@ fn main() {
 
             let git_pull_args = vec!["pull", "origin", &branch_name];
 
-            let status =
+            let result =
                 run_command_stream("git", git_pull_args, "Failed to pull changes from remote");
+
+            let status = result.1;
 
             if !status.success() {
                 println!(
@@ -370,11 +447,13 @@ fn main() {
 
                     let git_pull_args = vec!["pull", "origin", &branch_name];
 
-                    let status = run_command_stream(
+                    let result = run_command_stream(
                         "git",
                         git_pull_args,
                         "Failed to pull changes from remote",
                     );
+
+                    let status = result.1;
 
                     if status.success() {
                         println!(
