@@ -179,50 +179,28 @@ fn main() {
     let changes = content_to_commit();
 
     let mut selected_files_to_commit = Vec::<String>::new();
+    let mut add_all_files = false;
 
     if !changes.is_empty() {
-        let changes_to_commit: Result<Vec<String>, InquireError> = inquire::MultiSelect::new(
-            "Select changes to add to the commit:",
-            changes
-                .iter()
-                .map(|change| {
-                    format!(
-                        "{}{}: {}\x1b[0m",
-                        change.color, change.change_type, change.value
-                    )
-                })
-                .collect(),
-        )
-        .prompt();
+        let add_all_files_result: Result<bool, InquireError> =
+            inquire::Confirm::new("Do you want to add all changes to the commit?").prompt();
 
-        let changes_to_commit = match changes_to_commit {
-            Ok(changes) => changes,
+        add_all_files = match add_all_files_result {
+            Ok(add_all) => add_all,
             Err(e) => {
                 println!("{}", utils::format_error_message(&format!("Error: {}", e)));
                 return;
             }
         };
-        let selected_files: Vec<String> = changes
-            .iter()
-            .filter(|change| {
-                changes_to_commit.contains(&format!(
-                    "{}{}: {}\x1b[0m",
-                    change.color, change.change_type, change.value
-                ))
-            })
-            .map(|change| change.value.clone())
-            .collect();
 
-        selected_files_to_commit = selected_files.clone();
+        if add_all_files {
+            selected_files_to_commit = changes.iter().map(|change| change.value.clone()).collect();
 
-        println!("Total files staged: {}", selected_files.len());
-
-        if !selected_files.is_empty() {
             let add_to_commit_result = std::process::Command::new("git")
                 .arg("add")
-                .args(&selected_files)
+                .arg(".")
                 .output()
-                .expect(&utils::format_error_message("Failed to stage changes"));
+                .expect(&utils::format_error_message("Failed to stage all changes"));
 
             if !add_to_commit_result.status.success() {
                 if debug {
@@ -230,8 +208,62 @@ fn main() {
                 }
                 println!(
                     "{}",
-                    utils::format_error_message("Error: Failed to stage changes")
+                    utils::format_error_message("Error: Failed to stage all changes")
                 );
+            }
+        } else {
+            let changes_to_commit: Result<Vec<String>, InquireError> = inquire::MultiSelect::new(
+                "Select changes to add to the commit:",
+                changes
+                    .iter()
+                    .map(|change| {
+                        format!(
+                            "{}{}: {}\x1b[0m",
+                            change.color, change.change_type, change.value
+                        )
+                    })
+                    .collect::<Vec<String>>(),
+            )
+            .prompt();
+
+            let changes_to_commit = match changes_to_commit {
+                Ok(changes) => changes,
+                Err(e) => {
+                    println!("{}", utils::format_error_message(&format!("Error: {}", e)));
+                    return;
+                }
+            };
+            let selected_files: Vec<String> = changes
+                .iter()
+                .filter(|change| {
+                    changes_to_commit.contains(&format!(
+                        "{}{}: {}\x1b[0m",
+                        change.color, change.change_type, change.value
+                    ))
+                })
+                .map(|change| change.value.clone())
+                .collect();
+
+            selected_files_to_commit = selected_files.clone();
+
+            println!("Total files staged: {}", selected_files.len());
+
+            if !selected_files.is_empty() {
+                let add_to_commit_result = std::process::Command::new("git")
+                    .arg("add")
+                    .args(&selected_files)
+                    .output()
+                    .expect(&utils::format_error_message("Failed to stage changes"));
+
+                if !add_to_commit_result.status.success() {
+                    if debug {
+                        eprintln!("{}", String::from_utf8_lossy(&add_to_commit_result.stderr));
+                    }
+                    println!(
+                        "{}",
+                        utils::format_error_message("Error: Failed to stage changes")
+                    );
+                }
             }
         }
     }
@@ -329,14 +361,24 @@ fn main() {
             println!("Pre-commit hook failed. Verifying staged files...");
 
             if !selected_files_to_commit.is_empty() {
-                let add_to_commit_result = std::process::Command::new("git")
-                    .arg("add")
-                    .args(&selected_files_to_commit)
-                    .output()
-                    .expect(&utils::format_error_message("Failed to re-stage changes"));
+                let add_to_commit_result = if add_all_files {
+                    run_command_stream("git", vec!["add", "."], "Failed to re-stage changes")
+                } else {
+                    run_command_stream(
+                        "git",
+                        vec!["add"]
+                            .into_iter()
+                            .chain(selected_files_to_commit.iter().map(|s| s.as_str()))
+                            .collect(),
+                        "Failed to re-stage changes",
+                    )
+                };
 
-                if !add_to_commit_result.status.success() {
-                    eprintln!("{}", String::from_utf8_lossy(&add_to_commit_result.stderr));
+                let add_to_commit_content = add_to_commit_result.0;
+                let add_to_commit_status = add_to_commit_result.1;
+
+                if !add_to_commit_status.success() {
+                    eprintln!("{}", add_to_commit_content);
                     println!(
                         "{}",
                         utils::format_error_message("Error: Failed to re-stage changes")
@@ -422,10 +464,32 @@ fn main() {
         if local_commit.stdout != remote_commit.stdout {
             println!("There are changes to pull from the remote repository.");
 
-            let git_pull_args = vec!["pull", "origin", &branch_name];
+            let rebase_config = std::process::Command::new("git")
+                .arg("config")
+                .arg("--get")
+                .arg("pull.rebase")
+                .output()
+                .expect(&utils::format_error_message(
+                    "Failed to get git config pull.rebase",
+                ));
 
-            let result =
-                run_command_stream("git", git_pull_args, "Failed to pull changes from remote");
+            let rebase_flag = if rebase_config.stdout.starts_with(b"true") {
+                "--rebase"
+            } else {
+                ""
+            };
+
+            let git_pull_args = if rebase_flag.is_empty() {
+                vec!["pull", "origin", &branch_name]
+            } else {
+                vec!["pull", "--rebase", "origin", &branch_name]
+            };
+
+            let result = run_command_stream(
+                "git",
+                git_pull_args.clone(),
+                "Failed to pull changes from remote",
+            );
 
             let status = result.1;
 
@@ -445,11 +509,9 @@ fn main() {
                 if stash_status.status.success() {
                     println!("\x1b[0;32mSuccessfully stashed changes\x1b[0m");
 
-                    let git_pull_args = vec!["pull", "origin", &branch_name];
-
                     let result = run_command_stream(
                         "git",
-                        git_pull_args,
+                        git_pull_args.clone(),
                         "Failed to pull changes from remote",
                     );
 
