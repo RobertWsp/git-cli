@@ -1,0 +1,38 @@
+# Git CLI Configuration Example
+# Place this file at ~/.config/git-cli/config.toml
+
+[general]
+# Default emoji when none is specified
+default_emoji = "✨"
+
+# Automatically push after successful commit
+auto_push = false
+
+# Ask before pushing to remote repository
+confirm_before_push = true
+
+# Enable debug logging
+debug = false
+
+[commit]
+# Enforce conventional commit format validation
+enforce_conventional = true
+
+# Maximum characters allowed in commit title
+max_title_length = 50
+
+# Maximum characters per line in commit body
+max_body_length = 72
+
+# Automatically capitalize first letter of title
+auto_capitalize_title = true
+
+[hooks]
+# Execute pre-commit hooks during commit process
+run_pre_commit = true
+
+# Attempt to automatically fix linting issues
+auto_fix_lint = true
+
+# Retry commit operation if hooks fail initially
+retry_on_failure = true

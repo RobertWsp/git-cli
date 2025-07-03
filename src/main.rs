@@ -1,606 +1,332 @@
 use clap::{Arg, Command};
-use inquire::{InquireError, Select};
-use std::io::BufRead;
+use log::{info, warn, error, debug};
+
 mod emojis;
 mod utils;
+mod errors;
+mod config;
+mod git;
+mod ui;
+mod validation;
 
-#[derive(Debug, Clone)]
-struct Change {
-    color: String,
-    change_type: String,
-    value: String,
+use errors::{Result, GitCliError};
+use config::Config;
+use git::GitService;
+use ui::UIService;
+
+#[derive(Debug)]
+struct AppConfig {
+    debug: bool,
+    non_interactive: bool,
+    emoji: Option<String>,
+    title: Option<String>,
+    body: Option<String>,
 }
 
-fn selected_emoji(emojis_object: emojis::EmojisObject, selected: String) -> emojis::Emoji {
-    let selected_emoji = emojis_object
-        .emojis
-        .iter()
-        .find(|emoji| selected.starts_with(&emoji.emoji))
-        .expect(&utils::format_error_message("Invalid emoji selected."));
-
-    return (*selected_emoji).clone();
+struct GitWorkflow {
+    config: Config,
+    app_config: AppConfig,
+    git_service: GitService,
+    ui_service: UIService,
 }
 
-fn verify_git_initialized() {
-    // Run 'git rev-parse --is-inside-work-tree' to check if the current directory is a git repository
-    let output = std::process::Command::new("git")
-        .arg("rev-parse")
-        .arg("--is-inside-work-tree")
-        .output()
-        .expect(&utils::format_error_message(
-            "Failed to execute git command",
-        ));
+impl GitWorkflow {
+    fn new(app_config: AppConfig) -> Result<Self> {
+        let config = Config::load()?;
+        let git_service = GitService::new(app_config.debug);
+        let ui_service = UIService::new(config.clone());
 
-    if !output.stdout.starts_with(b"true") {
-        panic!("Not a git repository.");
+        Ok(Self {
+            config,
+            app_config,
+            git_service,
+            ui_service,
+        })
     }
-}
 
-fn content_to_commit() -> Vec<Change> {
-    // Run 'git status --porcelain' to check for uncommitted changes
-    let output = std::process::Command::new("git")
-        .arg("status")
-        .arg("--porcelain")
-        .output()
-        .expect(&utils::format_error_message(
-            "Failed to execute git command",
-        ));
+    async fn execute(&self) -> Result<()> {
+        info!("Starting git-cli workflow");
 
-    let status_output = String::from_utf8_lossy(&output.stdout);
+        // Verify git repository
+        self.git_service.verify_git_initialized()?;
 
-    println!();
+        // Get changes
+        let changes = self.git_service.get_status()?;
+        if changes.is_empty() {
+            self.ui_service.show_info("No changes to commit.");
+            return Ok(());
+        }
 
-    let mut changes = Vec::new();
+        self.ui_service.show_changes(&changes);
 
-    for line in status_output.lines() {
-        let line_parsed = line.trim().split_whitespace().last().unwrap().to_string();
+        // Stage files
+        let selected_files = self.stage_files(&changes).await?;
 
-        let change = if line.find("A ").is_some() {
-            Change {
-                color: "\x1b[0;32m".to_string(), // Green for added files
-                change_type: "Added".to_string(),
-                value: line_parsed,
-            }
-        } else if line.find("M ").is_some() {
-            Change {
-                color: "\x1b[0;33m".to_string(), // Yellow for modified files
-                change_type: "Modified".to_string(),
-                value: line_parsed,
-            }
-        } else if line.find("D ").is_some() {
-            Change {
-                color: "\x1b[0;31m".to_string(), // Red for deleted files
-                change_type: "Deleted".to_string(),
-                value: line_parsed,
-            }
-        } else if line.find("R ").is_some() {
-            Change {
-                color: "\x1b[0;34m".to_string(), // Blue for renamed files
-                change_type: "Renamed".to_string(),
-                value: line_parsed,
-            }
-        } else if line.find("??").is_some() {
-            Change {
-                color: "\x1b[0;35m".to_string(), // Magenta for untracked files
-                change_type: "Untracked".to_string(),
-                value: line_parsed,
-            }
+        // Get commit details
+        let (emoji, title, body) = self.get_commit_details(&changes).await?;
+
+        // Create commit message
+        let commit_title = format!("{} {}", emoji.emoji, title);
+        
+        // Attempt commit
+        let commit_successful = self.attempt_commit(&commit_title, body.as_deref(), &selected_files).await?;
+        
+        if !commit_successful {
+            return Err(GitCliError::GitCommandFailed("Commit failed".to_string()));
+        }
+
+        self.ui_service.show_success(&format!("Successfully committed with emoji: {}", emoji.emoji));
+
+        // Handle remote operations
+        self.handle_remote_operations().await?;
+
+        // Show recent commits
+        self.show_commit_summary().await?;
+
+        Ok(())
+    }
+
+    async fn stage_files(&self, changes: &[git::Change]) -> Result<Vec<String>> {
+        let (add_all, selected_files) = if self.app_config.non_interactive {
+            (true, changes.iter().map(|c| c.value.clone()).collect())
         } else {
-            continue;
+            let add_all = self.ui_service.confirm_add_all_files()?;
+            let files = if add_all {
+                changes.iter().map(|c| c.value.clone()).collect()
+            } else {
+                self.ui_service.select_files_to_commit(changes)?
+            };
+            (add_all, files)
         };
 
-        changes.push(change);
+        if selected_files.is_empty() {
+            return Err(GitCliError::NoChanges);
+        }
+
+        // Stage files
+        if add_all {
+            self.git_service.add_files(&[])?; // Empty slice means add all
+        } else {
+            self.git_service.add_files(&selected_files)?;
+        }
+
+        self.ui_service.show_info(&format!("Staged {} files", selected_files.len()));
+        Ok(selected_files)
     }
 
-    println!();
+    async fn get_commit_details(&self, changes: &[git::Change]) -> Result<(emojis::Emoji, String, Option<String>)> {
+        let emojis_object = emojis::get_emojis()?;
 
-    return changes;
-}
+        let emoji = if let Some(emoji_str) = &self.app_config.emoji {
+            emojis_object
+                .emojis
+                .iter()
+                .find(|e| e.emoji == *emoji_str || e.code == *emoji_str)
+                .cloned()
+                .ok_or(GitCliError::InvalidEmoji)?
+        } else {
+            self.ui_service.select_emoji(&emojis_object)?
+        };
 
-fn run_command_stream(
-    command: &str,
-    args: Vec<&str>,
-    error_message: &str,
-) -> (String, std::process::ExitStatus) {
-    let mut child = std::process::Command::new(command)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect(&utils::format_error_message(error_message));
+        let title = if let Some(title) = &self.app_config.title {
+            title.clone()
+        } else {
+            self.ui_service.get_commit_title(changes)?
+        };
 
-    let stdout = child.stdout.take().expect("Failed to capture stdout");
-    let stderr = child.stderr.take().expect("Failed to capture stderr");
+        let body = if let Some(body) = &self.app_config.body {
+            Some(body.clone())
+        } else if !self.app_config.non_interactive {
+            self.ui_service.get_commit_message()?
+        } else {
+            None
+        };
 
-    let stdout_reader = std::io::BufReader::new(stdout);
-    let stderr_reader = std::io::BufReader::new(stderr);
+        Ok((emoji, title, body))
+    }
 
-    let stdout_thread = std::thread::spawn(move || {
-        let mut output = String::new();
+    async fn attempt_commit(&self, title: &str, body: Option<&str>, selected_files: &[String]) -> Result<bool> {
+        debug!("Attempting commit with title: {}", title);
+        
+        let success = self.git_service.commit(title, body)?;
+        
+        if !success {
+            warn!("Initial commit failed, checking for pre-commit hooks");
+            
+            if self.config.hooks.retry_on_failure {
+                self.ui_service.show_warning("Pre-commit hook failed. Re-staging files and retrying...");
+                
+                // Re-stage files
+                self.git_service.add_files(selected_files)?;
+                self.ui_service.show_success("Successfully re-staged changes");
+                
+                // Retry commit
+                let retry_success = self.git_service.commit(title, body)?;
+                if !retry_success {
+                    self.ui_service.show_error("Commit failed after retry");
+                    return Ok(false);
+                }
+                
+                self.ui_service.show_success("Commit successful after retry");
+                return Ok(true);
+            }
+        }
+        
+        Ok(success)
+    }
 
-        for line in stdout_reader.lines() {
-            if let Ok(line) = line {
-                println!("{}", line);
-                output.push_str(&line);
-                output.push('\n');
+    async fn handle_remote_operations(&self) -> Result<()> {
+        let branch = self.git_service.get_current_branch()?;
+        self.ui_service.show_info(&format!("Current branch: {}", branch));
+
+        // Fetch remote changes
+        if let Err(e) = self.git_service.fetch_origin(&branch) {
+            warn!("Failed to fetch from remote: {}", e);
+            return Ok(()); // Continue even if fetch fails
+        }
+
+        // Check for remote changes
+        match self.git_service.has_remote_changes(&branch) {
+            Ok(true) => {
+                self.ui_service.show_info("There are changes to pull from the remote repository.");
+                
+                // Try to pull with rebase if configured
+                let use_rebase = true; // Could be made configurable
+                match self.git_service.pull(&branch, use_rebase) {
+                    Ok(()) => {
+                        self.ui_service.show_success("Successfully pulled changes from remote");
+                    }
+                    Err(_) => {
+                        self.ui_service.show_warning("Pull failed, trying with stash...");
+                        
+                        // Stash, pull, then pop
+                        self.git_service.stash()?;
+                        match self.git_service.pull(&branch, use_rebase) {
+                            Ok(()) => {
+                                self.ui_service.show_success("Successfully pulled changes");
+                                match self.git_service.stash_pop() {
+                                    Ok(()) => self.ui_service.show_success("Successfully restored stashed changes"),
+                                    Err(e) => self.ui_service.show_warning(&format!("Failed to restore stash: {}", e)),
+                                }
+                            }
+                            Err(e) => {
+                                self.ui_service.show_error(&format!("Failed to pull: {}", e));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(false) => {
+                self.ui_service.show_info("No changes to pull from remote");
+            }
+            Err(e) => {
+                warn!("Failed to check remote changes: {}", e);
             }
         }
 
-        output
-    });
-
-    let stderr_thread = std::thread::spawn(move || {
-        let mut output = String::new();
-        for line in stderr_reader.lines() {
-            if let Ok(line) = line {
-                eprintln!("{}", line);
-                output.push_str(&line);
-                output.push('\n');
+        // Ask user if they want to push
+        if !self.app_config.non_interactive {
+            let should_push = self.ui_service.confirm_push()?;
+            if should_push {
+                match self.git_service.push(&branch) {
+                    Ok(()) => {
+                        self.ui_service.show_success(&format!("Successfully pushed to origin/{}", branch));
+                    }
+                    Err(e) => {
+                        self.ui_service.show_error(&format!("Failed to push: {}", e));
+                    }
+                }
             }
         }
-        output
-    });
 
-    let status = child.wait().expect("Failed to wait on child");
+        Ok(())
+    }
 
-    let stdout_output = stdout_thread.join().expect("Failed to join stdout thread");
-    let stderr_output = stderr_thread.join().expect("Failed to join stderr thread");
-
-    let combined_output = format!("{}\n{}", stdout_output, stderr_output);
-
-    return (combined_output, status);
-}
-
-fn format_string_to_title(title: String) -> String {
-    let mut chars = title.chars();
-
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    async fn show_commit_summary(&self) -> Result<()> {
+        match self.git_service.get_recent_commits(5) {
+            Ok(commits) => {
+                self.ui_service.show_recent_commits(&commits);
+            }
+            Err(e) => {
+                warn!("Failed to get recent commits: {}", e);
+            }
+        }
+        Ok(())
     }
 }
 
-fn main() {
-    let matches = Command::new("Emoji Commit")
-        .version("1.0")
+fn parse_args() -> AppConfig {
+    let matches = Command::new("Git CLI with Emojis")
+        .version("0.2.0")
         .author("RobertWsp <sousarobert854@gmail.com>")
-        .about("A simple CLI tool to commit with emojis.")
-        .arg(Arg::new("debug").short('d').long("debug").required(false))
+        .about("A powerful CLI tool for commits with emojis and conventional commit support")
+        .arg(
+            Arg::new("debug")
+                .short('d')
+                .long("debug")
+                .help("Enable debug mode")
+                .action(clap::ArgAction::SetTrue)
+        )
+        .arg(
+            Arg::new("non-interactive")
+                .long("no-interactive")
+                .help("Run in non-interactive mode")
+                .action(clap::ArgAction::SetTrue)
+        )
+        .arg(
+            Arg::new("emoji")
+                .long("emoji")
+                .help("Emoji to use for commit")
+                .value_name("EMOJI")
+        )
+        .arg(
+            Arg::new("title")
+                .long("title")
+                .help("Commit title")
+                .value_name("TITLE")
+        )
+        .arg(
+            Arg::new("body")
+                .long("body")
+                .help("Commit body/description")
+                .value_name("BODY")
+        )
         .get_matches();
 
-    verify_git_initialized();
-
-    let debug = matches.contains_id("debug");
-
-    if debug {
-        println!("Debug mode enabled.");
+    AppConfig {
+        debug: matches.get_flag("debug"),
+        non_interactive: matches.get_flag("non-interactive"),
+        emoji: matches.get_one::<String>("emoji").cloned(),
+        title: matches.get_one::<String>("title").cloned(),
+        body: matches.get_one::<String>("body").cloned(),
     }
+}
 
-    let changes = content_to_commit();
+#[tokio::main]
+async fn main() {
+    let app_config = parse_args();
+    
+    // Initialize logging
+    utils::init_logger(app_config.debug);
+    
+    info!("Git CLI started");
+    debug!("App config: {:?}", app_config);
 
-    let mut selected_files_to_commit = Vec::<String>::new();
-    let mut add_all_files = false;
-
-    if !changes.is_empty() {
-        let add_all_files_result: Result<bool, InquireError> =
-            inquire::Confirm::new("Do you want to add all changes to the commit?").prompt();
-
-        add_all_files = match add_all_files_result {
-            Ok(add_all) => add_all,
-            Err(e) => {
-                println!("{}", utils::format_error_message(&format!("Error: {}", e)));
-                return;
-            }
-        };
-
-        if add_all_files {
-            selected_files_to_commit = changes.iter().map(|change| change.value.clone()).collect();
-
-            let add_to_commit_result = std::process::Command::new("git")
-                .arg("add")
-                .arg(".")
-                .output()
-                .expect(&utils::format_error_message("Failed to stage all changes"));
-
-            if !add_to_commit_result.status.success() {
-                if debug {
-                    eprintln!("{}", String::from_utf8_lossy(&add_to_commit_result.stderr));
-                }
-                println!(
-                    "{}",
-                    utils::format_error_message("Error: Failed to stage all changes")
-                );
-            }
-        } else {
-            let changes_to_commit: Result<Vec<String>, InquireError> = inquire::MultiSelect::new(
-                "Select changes to add to the commit:",
-                changes
-                    .iter()
-                    .map(|change| {
-                        format!(
-                            "{}{}: {}\x1b[0m",
-                            change.color, change.change_type, change.value
-                        )
-                    })
-                    .collect::<Vec<String>>(),
-            )
-            .prompt();
-
-            let changes_to_commit = match changes_to_commit {
-                Ok(changes) => changes,
-                Err(e) => {
-                    println!("{}", utils::format_error_message(&format!("Error: {}", e)));
-                    return;
-                }
-            };
-            let selected_files: Vec<String> = changes
-                .iter()
-                .filter(|change| {
-                    changes_to_commit.contains(&format!(
-                        "{}{}: {}\x1b[0m",
-                        change.color, change.change_type, change.value
-                    ))
-                })
-                .map(|change| change.value.clone())
-                .collect();
-
-            selected_files_to_commit = selected_files.clone();
-
-            println!("Total files staged: {}", selected_files.len());
-
-            if !selected_files.is_empty() {
-                let add_to_commit_result = std::process::Command::new("git")
-                    .arg("add")
-                    .args(&selected_files)
-                    .output()
-                    .expect(&utils::format_error_message("Failed to stage changes"));
-
-                if !add_to_commit_result.status.success() {
-                    if debug {
-                        eprintln!("{}", String::from_utf8_lossy(&add_to_commit_result.stderr));
-                    }
-                    println!(
-                        "{}",
-                        utils::format_error_message("Error: Failed to stage changes")
-                    );
-                }
+    // Create and execute workflow
+    match GitWorkflow::new(app_config) {
+        Ok(workflow) => {
+            if let Err(e) = workflow.execute().await {
+                error!("Workflow failed: {}", e);
+                eprintln!("{}", utils::format_error_message(&format!("Error: {}", e)));
+                std::process::exit(1);
             }
         }
-    }
-
-    let emojis_object =
-        emojis::get_emojis().expect(&utils::format_error_message("Failed to load emojis."));
-
-    let answer: Result<String, InquireError> = Select::new(
-        "Select an emoji for your commit message?",
-        emojis_object
-            .emojis
-            .iter()
-            .map(|emoji| format!("{} - {}", emoji.emoji, emoji.description))
-            .collect::<Vec<String>>(),
-    )
-    .prompt();
-
-    let selected_emoji = match answer {
-        Ok(selected) => selected_emoji(emojis_object, selected),
         Err(e) => {
-            println!("{}", utils::format_error_message(&format!("Error: {}", e)));
-            return;
-        }
-    };
-
-    let commit_title: Result<String, InquireError> =
-        inquire::CustomType::<String>::new("Enter commit title: ")
-            .with_parser(&|input| Ok(format_string_to_title(input.to_string())))
-            .prompt();
-
-    let commit_title = match commit_title {
-        Ok(title) => title,
-        Err(e) => {
-            println!("{}", utils::format_error_message(&format!("Error: {}", e)));
-            return;
-        }
-    };
-
-    let commit_message: Result<String, InquireError> =
-        inquire::CustomType::<String>::new("Enter commit message: ")
-            .with_parser(&|message| Ok(format_string_to_title(message.to_string())))
-            .prompt();
-
-    let commit_message = match commit_message {
-        Ok(message) => message,
-        Err(e) => {
-            println!("{}", utils::format_error_message(&format!("Error: {}", e)));
-            return;
-        }
-    };
-
-    let mut args = vec!["commit"];
-
-    args.push("-m");
-
-    let commit_title_with_emoji = format!("{} {}", selected_emoji.emoji, commit_title);
-
-    args.push(&commit_title_with_emoji);
-
-    let mut formatted_commit_message = String::new();
-
-    if commit_message.len() > 0 {
-        formatted_commit_message = format!("-m \"{}\"", commit_message);
-
-        args.push(&formatted_commit_message);
-    }
-
-    let result = run_command_stream("git", args, "Failed to commit changes");
-
-    let output = result.0;
-    let status = result.1;
-
-    if status.success() {
-        println!(
-            "\x1b[0;32mSuccessfully committed with emoji: {}\x1b[0m",
-            selected_emoji.emoji
-        );
-    } else {
-        println!(
-            "{}",
-            utils::format_error_message(&format!(
-                "Error: Failed to commit with emoji: {}",
-                selected_emoji.emoji
-            ))
-        );
-
-        let output_lower = output.to_lowercase();
-
-        if output_lower.contains("problems") {
-            println!("Eslint failed. Exiting...");
+            error!("Failed to initialize workflow: {}", e);
+            eprintln!("{}", utils::format_error_message(&format!("Failed to start: {}", e)));
             std::process::exit(1);
         }
-
-        if output_lower.contains("...failed") {
-            println!("Pre-commit hook failed. Verifying staged files...");
-
-            if !selected_files_to_commit.is_empty() {
-                let add_to_commit_result = if add_all_files {
-                    run_command_stream("git", vec!["add", "."], "Failed to re-stage changes")
-                } else {
-                    run_command_stream(
-                        "git",
-                        vec!["add"]
-                            .into_iter()
-                            .chain(selected_files_to_commit.iter().map(|s| s.as_str()))
-                            .collect(),
-                        "Failed to re-stage changes",
-                    )
-                };
-
-                let add_to_commit_content = add_to_commit_result.0;
-                let add_to_commit_status = add_to_commit_result.1;
-
-                if !add_to_commit_status.success() {
-                    eprintln!("{}", add_to_commit_content);
-                    println!(
-                        "{}",
-                        utils::format_error_message("Error: Failed to re-stage changes")
-                    );
-                } else {
-                    println!("\x1b[0;32mSuccessfully re-staged changes\x1b[0m");
-
-                    let args = vec![
-                        "commit",
-                        "-m",
-                        &commit_title_with_emoji,
-                        &formatted_commit_message,
-                    ];
-
-                    let commit_result = run_command_stream("git", args, "Failed to commit changes");
-
-                    let commit_status = commit_result.1;
-
-                    if commit_status.success() {
-                        println!(
-                            "\x1b[0;32mSuccessfully committed with emoji: {}\x1b[0m",
-                            selected_emoji.emoji
-                        );
-                    } else {
-                        println!(
-                            "{}",
-                            utils::format_error_message(&format!(
-                                "Error: Failed to commit with emoji: {}",
-                                selected_emoji.emoji
-                            ))
-                        );
-                        std::process::exit(1);
-                    }
-                }
-            }
-        }
     }
 
-    // Get the current branch name
-    let branch_output = std::process::Command::new("git")
-        .arg("rev-parse")
-        .arg("--abbrev-ref")
-        .arg("HEAD")
-        .output()
-        .expect(&utils::format_error_message("Failed to get current branch"));
-
-    let branch_name = String::from_utf8_lossy(&branch_output.stdout)
-        .trim()
-        .to_string();
-
-    // Check if there are any changes to pull from the remote repository
-    let fetch_status = std::process::Command::new("git")
-        .arg("fetch")
-        .arg("origin")
-        .arg(&branch_name)
-        .output()
-        .expect(&utils::format_error_message(
-            "Failed to fetch changes from remote",
-        ));
-
-    if !fetch_status.status.success() {
-        println!(
-            "{}",
-            utils::format_error_message("Error: Failed to fetch changes from remote repository")
-        );
-    } else {
-        let local_commit = std::process::Command::new("git")
-            .arg("rev-parse")
-            .arg("HEAD")
-            .output()
-            .expect(&utils::format_error_message(
-                "Failed to get local commit hash",
-            ));
-
-        let remote_commit = std::process::Command::new("git")
-            .arg("rev-parse")
-            .arg(format!("origin/{}", branch_name))
-            .output()
-            .expect(&utils::format_error_message(
-                "Failed to get remote commit hash",
-            ));
-
-        if local_commit.stdout != remote_commit.stdout {
-            println!("There are changes to pull from the remote repository.");
-
-            let rebase_config = std::process::Command::new("git")
-                .arg("config")
-                .arg("--get")
-                .arg("pull.rebase")
-                .output()
-                .expect(&utils::format_error_message(
-                    "Failed to get git config pull.rebase",
-                ));
-
-            let rebase_flag = if rebase_config.stdout.starts_with(b"true") {
-                "--rebase"
-            } else {
-                ""
-            };
-
-            let git_pull_args = if rebase_flag.is_empty() {
-                vec!["pull", "origin", &branch_name]
-            } else {
-                vec!["pull", "--rebase", "origin", &branch_name]
-            };
-
-            let result = run_command_stream(
-                "git",
-                git_pull_args.clone(),
-                "Failed to pull changes from remote",
-            );
-
-            let status = result.1;
-
-            if !status.success() {
-                println!(
-                    "{}",
-                    utils::format_error_message(
-                        "Error: Failed to pull changes from remote repository"
-                    )
-                );
-
-                let stash_status = std::process::Command::new("git")
-                    .arg("stash")
-                    .output()
-                    .expect(&utils::format_error_message("Failed to stash changes"));
-
-                if stash_status.status.success() {
-                    println!("\x1b[0;32mSuccessfully stashed changes\x1b[0m");
-
-                    let result = run_command_stream(
-                        "git",
-                        git_pull_args.clone(),
-                        "Failed to pull changes from remote",
-                    );
-
-                    let status = result.1;
-
-                    if status.success() {
-                        println!(
-                            "\x1b[0;32mSuccessfully pulled changes from remote repository\x1b[0m"
-                        );
-
-                        let stash_pop_status = std::process::Command::new("git")
-                            .arg("stash")
-                            .arg("pop")
-                            .output()
-                            .expect(&utils::format_error_message(
-                                "Failed to pop stashed changes",
-                            ));
-
-                        if stash_pop_status.status.success() {
-                            println!("\x1b[0;32mSuccessfully popped stashed changes\x1b[0m");
-                        } else {
-                            println!(
-                                "{}",
-                                utils::format_error_message("Error: Failed to pop stashed changes")
-                            );
-                        }
-                    } else {
-                        println!(
-                            "{}",
-                            utils::format_error_message(
-                                "Error: Failed to pull changes from remote repository"
-                            )
-                        );
-                    }
-                } else {
-                    println!(
-                        "{}",
-                        utils::format_error_message("Error: Failed to stash changes")
-                    );
-                }
-            }
-        } else {
-            println!("No changes to pull from the remote repository.");
-        }
-    }
-
-    let log_output = std::process::Command::new("git")
-        .arg("log")
-        .arg("--oneline")
-        .output()
-        .expect(&utils::format_error_message(
-            "Failed to retrieve commit log",
-        ));
-
-    let log_output = String::from_utf8_lossy(&log_output.stdout);
-    let first_five_commits: Vec<&str> = log_output.lines().take(5).collect();
-    println!("Current commits:\n{}", first_five_commits.join("\n"));
-
-    println!("Current branch: {}", branch_name);
-
-    let push_to_remote: Result<bool, InquireError> =
-        inquire::Confirm::new("Do you want to push the commits to the remote repository?").prompt();
-
-    let push_to_remote = match push_to_remote {
-        Ok(push) => push,
-        Err(e) => {
-            println!("{}", utils::format_error_message(&format!("Error: {}", e)));
-            return;
-        }
-    };
-
-    if push_to_remote {
-        let push_status = std::process::Command::new("git")
-            .arg("push")
-            .arg("origin")
-            .arg(&branch_name)
-            .output()
-            .expect(&utils::format_error_message("Failed to push commits"));
-
-        if push_status.status.success() {
-            println!(
-                "\x1b[0;32mSuccessfully pushed commits to remote repository on branch: {}\x1b[0m",
-                branch_name
-            );
-        } else {
-            println!(
-                "{}",
-                utils::format_error_message("Error: Failed to push commits to remote repository")
-            );
-        }
-    }
+    info!("Git CLI completed successfully");
 }

@@ -1,0 +1,179 @@
+{
+  "emojis": [
+    {
+      "emoji": "✨",
+      "entity": "&#x2728;",
+      "code": ":sparkles:",
+      "description": "Introduce new features",
+      "name": "sparkles"
+    },
+    {
+      "emoji": "🐛",
+      "entity": "&#x1f41b;",
+      "code": ":bug:",
+      "description": "Fix a bug",
+      "name": "bug"
+    },
+    {
+      "emoji": "🔧",
+      "entity": "&#x1f527;",
+      "code": ":wrench:",
+      "description": "Add or update configuration files",
+      "name": "wrench"
+    },
+    {
+      "emoji": "📝",
+      "entity": "&#x1f4dd;",
+      "code": ":memo:",
+      "description": "Add or update documentation",
+      "name": "memo"
+    },
+    {
+      "emoji": "🎨",
+      "entity": "&#x1f3a8;",
+      "code": ":art:",
+      "description": "Improve structure / format of the code",
+      "name": "art"
+    },
+    {
+      "emoji": "⚡️",
+      "entity": "&#x26a1;",
+      "code": ":zap:",
+      "description": "Improve performance",
+      "name": "zap"
+    },
+    {
+      "emoji": "🔥",
+      "entity": "&#x1f525;",
+      "code": ":fire:",
+      "description": "Remove code or files",
+      "name": "fire"
+    },
+    {
+      "emoji": "🚑️",
+      "entity": "&#128657;",
+      "code": ":ambulance:",
+      "description": "Critical hotfix",
+      "name": "ambulance"
+    },
+    {
+      "emoji": "💄",
+      "entity": "&#ff99cc;",
+      "code": ":lipstick:",
+      "description": "Add or update the UI and style files",
+      "name": "lipstick"
+    },
+    {
+      "emoji": "🎉",
+      "entity": "&#127881;",
+      "code": ":tada:",
+      "description": "Begin a project",
+      "name": "tada"
+    },
+    {
+      "emoji": "✅",
+      "entity": "&#x2705;",
+      "code": ":white_check_mark:",
+      "description": "Add, update, or pass tests",
+      "name": "white-check-mark"
+    },
+    {
+      "emoji": "🔒️",
+      "entity": "&#x1f512;",
+      "code": ":lock:",
+      "description": "Fix security issues",
+      "name": "lock"
+    },
+    {
+      "emoji": "📈",
+      "entity": "&#x1f4c8;",
+      "code": ":chart_with_upwards_trend:",
+      "description": "Add or update analytics or track code",
+      "name": "chart-with-upwards-trend"
+    },
+    {
+      "emoji": "♻️",
+      "entity": "&#x267e;",
+      "code": ":recycle:",
+      "description": "Refactor code",
+      "name": "recycle"
+    },
+    {
+      "emoji": "⬆️",
+      "entity": "&#11014;",
+      "code": ":arrow_up:",
+      "description": "Upgrade dependencies",
+      "name": "arrow-up"
+    },
+    {
+      "emoji": "⬇️",
+      "entity": "&#11015;",
+      "code": ":arrow_down:",
+      "description": "Downgrade dependencies",
+      "name": "arrow-down"
+    },
+    {
+      "emoji": "📌",
+      "entity": "&#128204;",
+      "code": ":pushpin:",
+      "description": "Pin dependencies to specific versions",
+      "name": "pushpin"
+    },
+    {
+      "emoji": "🔀",
+      "entity": "&#128256;",
+      "code": ":twisted_rightwards_arrows:",
+      "description": "Merge branches",
+      "name": "twisted-rightwards-arrows"
+    },
+    {
+      "emoji": "⏪️",
+      "entity": "&#9194;",
+      "code": ":rewind:",
+      "description": "Revert changes",
+      "name": "rewind"
+    },
+    {
+      "emoji": "🔨",
+      "entity": "&#128296;",
+      "code": ":hammer:",
+      "description": "Add or update development scripts",
+      "name": "hammer"
+    },
+    {
+      "emoji": "🏗️",
+      "entity": "&#1f3d7;",
+      "code": ":building_construction:",
+      "description": "Make architectural changes",
+      "name": "building-construction"
+    },
+    {
+      "emoji": "💚",
+      "entity": "&#128154;",
+      "code": ":green_heart:",
+      "description": "Fix CI Build",
+      "name": "green-heart"
+    },
+    {
+      "emoji": "📦️",
+      "entity": "&#1F4E6;",
+      "code": ":package:",
+      "description": "Add or update compiled files or packages",
+      "name": "package"
+    },
+    {
+      "emoji": "🚀",
+      "entity": "&#1F680;",
+      "code": ":rocket:",
+      "description": "Deploy stuff",
+      "name": "rocket"
+    },
+    {
+      "emoji": "🐳",
+      "entity": "&#1f433;",
+      "code": ":whale:",
+      "description": "Work about Docker",
+      "name": "whale"
+    }
+  ]
+}

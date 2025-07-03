@@ -1,11 +1,37 @@
 [package]
 name = "git-cli"
-version = "0.1.0"
-edition = "2024"
+version = "0.2.0"
+edition = "2021"
+authors = ["RobertWsp <sousarobert854@gmail.com>"]
+description = "A powerful CLI tool for Git commits with emoji support and conventional commit validation"
+readme = "README.md"
+homepage = "https://github.com/yourusername/git-cli"
+repository = "https://github.com/yourusername/git-cli"
+license = "MIT"
+keywords = ["git", "emoji", "commit", "cli", "conventional-commits"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "git-cli"
+path = "src/main.rs"
+
+[lib]
+name = "git_cli"
+path = "src/lib.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 inquire = "0.7.5"
-clap = "4.5.32"
+clap = { version = "4.0", features = ["derive"] }
 dirs = "6.0.0"
+thiserror = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+config = "0.13"
+tokio = { version = "1.0", features = ["full"] }
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3.0"
