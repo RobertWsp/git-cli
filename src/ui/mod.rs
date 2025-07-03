@@ -96,7 +96,7 @@ impl UIService {
                 .prompt()
                 .map_err(GitCliError::InquireError)?;
 
-            let formatted_title = if self.config.commit.auto_capitalize_title {
+            let formatted_title = if self.config.commit.auto_capitalize_title && !self.config.commit.enforce_conventional {
                 self.format_string_to_title(title)
             } else {
                 title
