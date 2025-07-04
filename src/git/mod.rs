@@ -45,40 +45,59 @@ impl GitService {
         let mut changes = Vec::new();
 
         for line in status_output.lines() {
-            let line_parsed = line.trim().split_whitespace().last().unwrap_or("").to_string();
+            if line.is_empty() || line.len() < 3 {
+                continue;
+            }
+            
+            let status_chars: Vec<char> = line.chars().collect();
+            let index_status = status_chars[0];
+            let working_tree_status = status_chars[1];
+            let filename = line[3..].to_string();
 
-            let change = if line.starts_with("A ") {
-                Change {
-                    color: "\x1b[0;32m".to_string(), // Green for added files
-                    change_type: "Added".to_string(),
-                    value: line_parsed,
-                }
-            } else if line.starts_with("M ") {
-                Change {
-                    color: "\x1b[0;33m".to_string(), // Yellow for modified files
-                    change_type: "Modified".to_string(),
-                    value: line_parsed,
-                }
-            } else if line.starts_with("D ") {
-                Change {
-                    color: "\x1b[0;31m".to_string(), // Red for deleted files
-                    change_type: "Deleted".to_string(),
-                    value: line_parsed,
-                }
-            } else if line.starts_with("R ") {
-                Change {
-                    color: "\x1b[0;34m".to_string(), // Blue for renamed files
-                    change_type: "Renamed".to_string(),
-                    value: line_parsed,
-                }
-            } else if line.starts_with("??") {
+            // Determine the primary change type based on both index and working tree status
+            let change = if index_status == '?' && working_tree_status == '?' {
                 Change {
                     color: "\x1b[0;35m".to_string(), // Magenta for untracked files
                     change_type: "Untracked".to_string(),
-                    value: line_parsed,
+                    value: filename,
+                }
+            } else if index_status == 'A' || working_tree_status == 'A' {
+                Change {
+                    color: "\x1b[0;32m".to_string(), // Green for added files
+                    change_type: "Added".to_string(),
+                    value: filename,
+                }
+            } else if index_status == 'M' || working_tree_status == 'M' {
+                Change {
+                    color: "\x1b[0;33m".to_string(), // Yellow for modified files
+                    change_type: "Modified".to_string(),
+                    value: filename,
+                }
+            } else if index_status == 'D' || working_tree_status == 'D' {
+                Change {
+                    color: "\x1b[0;31m".to_string(), // Red for deleted files
+                    change_type: "Deleted".to_string(),
+                    value: filename,
+                }
+            } else if index_status == 'R' || working_tree_status == 'R' {
+                Change {
+                    color: "\x1b[0;34m".to_string(), // Blue for renamed files
+                    change_type: "Renamed".to_string(),
+                    value: filename,
+                }
+            } else if index_status == 'C' || working_tree_status == 'C' {
+                Change {
+                    color: "\x1b[0;36m".to_string(), // Cyan for copied files
+                    change_type: "Copied".to_string(),
+                    value: filename,
                 }
             } else {
-                continue;
+                // For any other status, treat as modified
+                Change {
+                    color: "\x1b[0;33m".to_string(), // Yellow for modified files
+                    change_type: "Modified".to_string(),
+                    value: filename,
+                }
             };
 
             changes.push(change);
