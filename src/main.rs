@@ -259,7 +259,7 @@ fn parse_args() -> AppConfig {
     let matches = Command::new("Git CLI with Emojis")
         .version("0.2.0")
         .author("RobertWsp <sousarobert854@gmail.com>")
-        .about("A powerful CLI tool for commits with emojis and conventional commit support")
+        .about("A powerful CLI tool for Git commits with emoji support")
         .arg(
             Arg::new("debug")
                 .short('d')

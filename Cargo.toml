@@ -3,12 +3,12 @@ name = "git-cli"
 version = "0.2.0"
 edition = "2021"
 authors = ["RobertWsp <sousarobert854@gmail.com>"]
-description = "A powerful CLI tool for Git commits with emoji support and conventional commit validation"
+description = "A powerful CLI tool for Git commits with emoji support"
 readme = "README.md"
 homepage = "https://github.com/yourusername/git-cli"
 repository = "https://github.com/yourusername/git-cli"
 license = "MIT"
-keywords = ["git", "emoji", "commit", "cli", "conventional-commits"]
+keywords = ["git", "emoji", "commit", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]

@@ -78,17 +78,7 @@ impl UIService {
         loop {
             let placeholder = self.generate_smart_placeholder(changes);
             
-            let help_message = if self.config.commit.enforce_conventional {
-                format!(
-                    "Use conventional commit format: type(scope): description\n\
-                     Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert\n\
-                     Example: feat: add user authentication\n\
-                     Max length: {} characters",
-                    self.config.commit.max_title_length
-                )
-            } else {
-                format!("Max length: {} characters", self.config.commit.max_title_length)
-            };
+            let help_message = format!("Max length: {} characters", self.config.commit.max_title_length);
 
             let title = Text::new("Enter commit title:")
                 .with_placeholder(&placeholder)
@@ -96,7 +86,7 @@ impl UIService {
                 .prompt()
                 .map_err(GitCliError::InquireError)?;
 
-            let formatted_title = if self.config.commit.auto_capitalize_title && !self.config.commit.enforce_conventional {
+            let formatted_title = if self.config.commit.auto_capitalize_title {
                 self.format_string_to_title(title)
             } else {
                 title
@@ -218,18 +208,6 @@ impl UIService {
             ));
         }
 
-        // Check conventional commit format
-        if self.config.commit.enforce_conventional && !self.is_conventional_commit(title) {
-            errors.push(
-                "Must follow conventional commit format: type(scope): description\n\
-                 Valid types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert\n\
-                 Examples:\n\
-                 • feat: add user authentication\n\
-                 • fix(ui): resolve button alignment\n\
-                 • docs: update installation guide".to_string()
-            );
-        }
-
         if !errors.is_empty() {
             let error_msg = errors.join("\n\n");
             return Err(GitCliError::ValidationError(error_msg));
@@ -258,30 +236,6 @@ impl UIService {
         }
 
         Ok(())
-    }
-
-    fn is_conventional_commit(&self, title: &str) -> bool {
-        let conventional_types = [
-            "feat", "fix", "docs", "style", "refactor", 
-            "test", "chore", "perf", "ci", "build", "revert"
-        ];
-        
-        debug!("Checking conventional commit format for: '{}'", title);
-        
-        for commit_type in &conventional_types {
-            let pattern1 = format!("{}: ", commit_type);
-            let pattern2 = format!("{}(", commit_type);
-            
-            debug!("Checking patterns: '{}' or '{}'", pattern1, pattern2);
-            
-            if title.starts_with(&pattern1) || title.starts_with(&pattern2) {
-                debug!("Title matches conventional commit format!");
-                return true;
-            }
-        }
-        
-        debug!("Title does NOT match conventional commit format");
-        false
     }
 
     fn generate_smart_placeholder(&self, changes: &[crate::git::Change]) -> String {
@@ -314,38 +268,20 @@ impl UIService {
         }
         
         // Generate suggestion based on analysis
-        if self.config.commit.enforce_conventional {
-            if has_deps {
-                "chore: update dependencies".to_string()
-            } else if has_docs && !has_tests && !has_new_files {
-                "docs: update documentation".to_string()
-            } else if has_tests && !has_new_files {
-                "test: add unit tests".to_string()
-            } else if has_config {
-                "chore: update configuration".to_string()
-            } else if has_ui {
-                "style: improve UI components".to_string()
-            } else if has_new_files {
-                "feat: add new feature".to_string()
-            } else {
-                "fix: resolve issue".to_string()
-            }
+        if has_deps {
+            "update dependencies"
+        } else if has_docs {
+            "update documentation"
+        } else if has_tests {
+            "add tests"
+        } else if has_config {
+            "update configuration"
+        } else if has_ui {
+            "improve styling"
+        } else if has_new_files {
+            "add new feature"
         } else {
-            if has_deps {
-                "update dependencies"
-            } else if has_docs {
-                "update documentation"
-            } else if has_tests {
-                "add tests"
-            } else if has_config {
-                "update configuration"
-            } else if has_ui {
-                "improve styling"
-            } else if has_new_files {
-                "add new feature"
-            } else {
-                "fix issue"
-            }.to_string()
-        }
+            "fix issue"
+        }.to_string()
     }
 }

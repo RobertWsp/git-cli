@@ -19,7 +19,6 @@ pub struct GeneralConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitConfig {
-    pub enforce_conventional: bool,
     pub max_title_length: usize,
     pub max_body_length: usize,
     pub auto_capitalize_title: bool,
@@ -42,7 +41,6 @@ impl Default for Config {
                 debug: false,
             },
             commit: CommitConfig {
-                enforce_conventional: true,
                 max_title_length: 50,
                 max_body_length: 72,
                 auto_capitalize_title: true,

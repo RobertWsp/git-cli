@@ -39,7 +39,6 @@ pub type Result<T> = std::result::Result<T, GitCliError>;
 pub enum ValidationError {
     TitleTooLong,
     TitleShouldStartLowercase,
-    NotConventionalCommit,
     BodyTooLong,
 }
 
@@ -48,18 +47,6 @@ impl std::fmt::Display for ValidationError {
         match self {
             ValidationError::TitleTooLong => write!(f, "Commit title is too long (max 50 characters)"),
             ValidationError::TitleShouldStartLowercase => write!(f, "Title should start with lowercase letter"),
-            ValidationError::NotConventionalCommit => write!(f, 
-                "Title must follow conventional commit format.\n\
-                 Format: type(scope): description\n\
-                 Examples:\n\
-                 • feat: add user authentication\n\
-                 • fix: resolve login bug\n\
-                 • docs: update README\n\
-                 • style: format code\n\
-                 • refactor: restructure modules\n\
-                 • test: add unit tests\n\
-                 • chore: update dependencies"
-            ),
             ValidationError::BodyTooLong => write!(f, "Body lines should be 72 characters or less"),
         }
     }

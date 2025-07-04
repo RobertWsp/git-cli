@@ -15,9 +15,6 @@ confirm_before_push = true
 debug = false
 
 [commit]
-# Enforce conventional commit format validation
-enforce_conventional = true
-
 # Maximum characters allowed in commit title
 max_title_length = 50
 
